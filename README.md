@@ -16,8 +16,10 @@ Claude Code の statusline コマンド（`~/.claude/statusline-command.sh` の 
 
 ## Setup
 
+GitHub Releases のバイナリを mise（ubi バックエンド）でインストール:
+
 ```sh
-cargo install --path .
+mise use -g ubi:hiyamamo/claude-statusline
 ```
 
 `~/.claude/settings.json`:
@@ -26,9 +28,20 @@ cargo install --path .
 {
   "statusLine": {
     "type": "command",
-    "command": "~/.cargo/bin/claude-statusline"
+    "command": "~/.local/share/mise/shims/claude-statusline"
   }
 }
+```
+
+ソースからインストールする場合は `cargo install --path .`（バイナリは `~/.cargo/bin/claude-statusline`）。
+
+## Release
+
+`v*` タグを push すると GitHub Actions が macOS (arm64 / x86_64) と Linux (x86_64) のバイナリをビルドしてリリースに添付する。
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 ## Development
