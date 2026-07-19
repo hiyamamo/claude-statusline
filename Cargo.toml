@@ -1,0 +1,13 @@
+[package]
+name = "claude-statusline"
+version = "0.1.0"
+edition = "2024"
+description = "Claude Code statusline command (Rust port of statusline-command.sh)"
+
+[dependencies]
+serde_json = "1"
+chrono = "0.4"
+
+[profile.release]
+strip = true
+lto = true
