@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::SystemTime;
 
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
 use serde_json::Value;
@@ -26,6 +27,9 @@ fn main() {
 
     if let Some(branch) = git_branch(cwd) {
         out.push_str(&format!(" ({branch})"));
+        if let Some(ci) = ci_status(cwd, &branch) {
+            out.push_str(&format!(" | {ci}"));
+        }
     }
 
     if let Some(model) = json
@@ -133,6 +137,114 @@ fn git_branch(cwd: &str) -> Option<String> {
     }
     let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!branch.is_empty()).then_some(branch)
+}
+
+/// CI + review status of the branch's PR, e.g. "CI:✔ Rv:👀".
+/// Data comes from `gh pr checks` / `gh pr view`, cached per (cwd, branch) for
+/// CI_TTL_SECS and refreshed by a detached background process so the
+/// statusline itself never waits on the network.
+fn ci_status(cwd: &str, branch: &str) -> Option<String> {
+    const CI_TTL_SECS: u64 = 60;
+    if cwd.is_empty() || matches!(branch, "main" | "master") {
+        return None;
+    }
+    let home = std::env::var("HOME").ok()?;
+    let cache_dir = Path::new(&home).join(".cache/claude-statusline");
+    let key = format!("ci-{:016x}", fnv1a(&format!("{cwd}|{branch}")));
+    let cache = cache_dir.join(format!("{key}.json"));
+    if !file_age_secs(&cache).is_some_and(|age| age < CI_TTL_SECS) {
+        let _ = std::fs::create_dir_all(&cache_dir);
+        let lock = cache_dir.join(format!("{key}.lock"));
+        // A recent lock means a refresh is already in flight (or gh is failing);
+        // don't pile up subprocesses
+        if !file_age_secs(&lock).is_some_and(|age| age < 2 * CI_TTL_SECS) {
+            let _ = std::fs::write(&lock, b"");
+            let tmp = cache_dir.join(format!("{key}.tmp"));
+            let script = format!(
+                "cd {cwd:?} || exit 0; \
+                 c=$(gh pr checks --json name,bucket 2>/dev/null); \
+                 r=$(gh pr view --json reviewDecision --jq .reviewDecision 2>/dev/null); \
+                 printf '{{\"checks\":%s,\"reviewDecision\":\"%s\"}}' \"${{c:-[]}}\" \"$r\" > {tmp:?} \
+                 && mv {tmp:?} {cache:?}; rm -f {lock:?}"
+            );
+            let _ = Command::new("sh")
+                .args(["-c", &script])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+        }
+    }
+    let data: Value = serde_json::from_str(&std::fs::read_to_string(&cache).ok()?).ok()?;
+    render_ci(&data)
+}
+
+fn render_ci(data: &Value) -> Option<String> {
+    // Checks tied to review approval (they stay pending until the PR is
+    // approved) are excluded from the CI verdict so "only review left" shows
+    // as a green CI with Rv:👀 instead of a forever-yellow CI
+    let ignore: Vec<String> = std::env::var("STATUSLINE_CI_IGNORE")
+        .unwrap_or_else(|_| "validate-review".to_string())
+        .split(',')
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let (mut pass, mut fail, mut pending) = (0, 0, 0);
+    for check in data.pointer("/checks").and_then(Value::as_array)? {
+        let name = check
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_lowercase();
+        if ignore.iter().any(|pat| name.contains(pat)) {
+            continue;
+        }
+        match check.get("bucket").and_then(Value::as_str).unwrap_or("") {
+            "pass" => pass += 1,
+            "fail" | "cancel" => fail += 1,
+            "pending" => pending += 1,
+            _ => {} // "skipping"
+        }
+    }
+    let review = data
+        .pointer("/reviewDecision")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if pass + fail + pending == 0 && review.is_empty() {
+        return None;
+    }
+    let mut s = String::from("CI:");
+    if fail > 0 {
+        s.push_str(&format!("{RED}✘{fail}{RESET}"));
+    } else if pending > 0 {
+        s.push_str(&format!("{YELLOW}●{pending}{RESET}"));
+    } else {
+        s.push_str(&format!("{GREEN}✔{RESET}"));
+    }
+    match review {
+        "REVIEW_REQUIRED" => s.push_str(&format!(" Rv:{YELLOW}👀{RESET}")),
+        "CHANGES_REQUESTED" => s.push_str(&format!(" Rv:{RED}✘{RESET}")),
+        "APPROVED" => s.push_str(&format!(" Rv:{GREEN}✔{RESET}")),
+        _ => {}
+    }
+    Some(s)
+}
+
+fn file_age_secs(path: &Path) -> Option<u64> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    SystemTime::now()
+        .duration_since(modified)
+        .ok()
+        .map(|d| d.as_secs())
+}
+
+fn fnv1a(s: &str) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 /// Detect account type via `claude auth status --json`, cached per session_id
