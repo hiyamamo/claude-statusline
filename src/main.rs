@@ -33,8 +33,8 @@ fn main() {
         .and_then(Value::as_str)
         .or_else(|| json.pointer("/model/id").and_then(Value::as_str))
     {
-        match account(&json) {
-            Some(acc) => out.push_str(&format!(" | [{acc}] {model}")),
+        match json.pointer("/effort/level").and_then(Value::as_str) {
+            Some(effort) => out.push_str(&format!(" | [{effort}] {model}")),
             None => out.push_str(&format!(" | {model}")),
         }
     }
@@ -81,6 +81,10 @@ fn main() {
     }
     if !rates.is_empty() {
         out.push_str(&format!(" | {}", rates.join("  ")));
+    }
+
+    if let Some(acc) = account(&json) {
+        out.push_str(&format!(" | [{acc}]"));
     }
 
     print!("{out}");

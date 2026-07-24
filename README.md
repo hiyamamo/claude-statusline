@@ -5,14 +5,15 @@ Claude Code の statusline コマンド（`~/.claude/statusline-command.sh` の 
 表示内容:
 
 ```
-~/projects/foo (main) | [Max] Fable 5 | 50K/200K (25%) | 5h:45%[████░░░░] →Mon 17:00  7d:12%[█░░░░░░░] →Wed 09:00
+~/projects/foo (main) | [xhigh] Opus 4.7 | 50K/200K (25%) | 5h:45%[████░░░░] →Mon 17:00  7d:12%[█░░░░░░░] →Wed 09:00 | [Max]
 ```
 
 - カレントディレクトリ（`~` 置換・長いパスは短縮）
 - git ブランチ
-- アカウント種別（`claude auth status` を session_id 単位でキャッシュ）+ モデル名
+- 推論 effort（`effort.level`、対応モデルのみ）+ モデル名
 - コンテキストウィンドウ使用量
 - 5h / 7d レート制限: 色付きバー（緑 <70% / 黄 <90% / 赤 >=90%）とリセット時刻
+- アカウント種別（`claude auth status` を session_id 単位でキャッシュ）
 
 ## Setup
 
